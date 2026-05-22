@@ -1,0 +1,56 @@
+/* ========== TEMA ESCURO (padrão) ========== */
+:root {
+  --bg-primary: #0a0c10;
+  --bg-secondary: #1a1d25;
+  --bg-tertiary: #232836;
+  --bg-input: #16181f;
+
+  --text-primary: #e1e1e6;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-light: #a5b4fc;
+
+  --border: #2a2f3a;
+  --border-light: #3a3f4a;
+
+  --online: #4caf50;
+  --offline: #555;
+  --badge: #ef4444;
+  --badge-unread: #4f46e5;
+
+  --shadow: 0 10px 25px rgba(0,0,0,0.5);
+}
+
+/* ========== TEMA CLARO ========== */
+.light-mode {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9;
+  --bg-input: #e2e8f0;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-light: #6366f1;
+
+  --border: #e2e8f0;
+  --border-light: #cbd5e1;
+
+  --online: #16a34a;
+  --offline: #94a3b8;
+  --badge: #ef4444;
+  --badge-unread: #4f46e5;
+
+  --shadow: 0 10px 25px rgba(0,0,0,0.1);
+}
+
+/* Classe utilitária para transições suaves */
+.theme-transition * {
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s !important;
+}
