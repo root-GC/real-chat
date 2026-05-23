@@ -91,6 +91,22 @@ export function ChatProvider({ children }) {
 
     socket.on('connect', () => socket.emit('join'));
 
+    // Adiciona DENTRO do useEffect do chatContext.jsx, junto aos outros socket.on:
+
+    socket.on('user:groups:new', (group) => {
+      // adicionado a um grupo por outra pessoa
+      addGroup(group);
+      socket.emit('join:group', { groupId: group.id });
+    });
+
+    socket.on('group:created:notify', ({ groupName, createdBy }) => {
+      addToast(`➕ ${createdBy} adicionou-te ao grupo "${groupName}"`);
+    });
+
+    // E no return do cleanup:
+    socket.off('user:groups:new');
+    socket.off('group:created:notify');
+
     // ── presence ────────────────────────────────────────────────────────────
     socket.on('initial_users', (list) => {
       setUsers((prev) => {

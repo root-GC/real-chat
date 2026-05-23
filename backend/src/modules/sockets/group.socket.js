@@ -6,7 +6,48 @@ const EVENTS          = require('./events');
 
 module.exports = function (io, socket) {
 
-  // ─── SEND GROUP MESSAGE ──────────────────────────────────────────────────
+  // ─── CREATE GROUP ─────────────────────────────────────────────────────────
+  socket.on('group:create', async ({ name, memberIds = [] }) => {
+    try {
+      if (!name?.trim()) {
+        socket.emit('group:create:error', 'O nome do grupo é obrigatório.');
+        return;
+      }
+
+      const group = await groupsService.createGroup(
+        name.trim(),
+        socket.user.id,
+        memberIds
+      );
+
+      // creator joins the room immediately
+      socket.join(`group:${group.id}`);
+      socket.emit('group:created', group);
+
+      // notify other members if they're online
+      for (const uid of memberIds) {
+        const targetSocket = await presenceRepo.getGroupLastSeen(uid, group.id)
+          .then(() => null)  // we just need the socket id
+          .catch(() => null);
+
+        // simpler: use presence service directly
+        const { getSocketId } = require('../presence/presence.service');
+        const sid = await getSocketId(uid);
+        if (sid) {
+          io.to(sid).emit('user:groups:new', group);   // frontend addGroup()
+          io.to(sid).emit('group:created:notify', {    // optional toast
+            groupName: group.name,
+            createdBy: socket.user.username,
+          });
+        }
+      }
+    } catch (e) {
+      console.error('[group:create]', e);
+      socket.emit('group:create:error', 'Erro interno ao criar grupo.');
+    }
+  });
+
+  // ─── SEND GROUP MESSAGE ───────────────────────────────────────────────────
   socket.on(EVENTS.GROUP_SEND, async ({ groupId, content, clientId }) => {
     const fromId = socket.user.id;
 
@@ -22,26 +63,19 @@ module.exports = function (io, socket) {
       clientId,
     };
 
-    // broadcast only inside the room (not io.emit)
     io.to(`group:${groupId}`).emit(EVENTS.GROUP_MESSAGE, payload);
-
-    // mark sender as having seen up to now
     await presenceRepo.setGroupLastSeen(fromId, groupId);
   });
 
-  // ─── JOIN GROUP MID-SESSION ──────────────────────────────────────────────
-  // Called by the frontend after creating a new group or being added to one.
+  // ─── JOIN GROUP MID-SESSION ───────────────────────────────────────────────
   socket.on(EVENTS.JOIN_GROUP, async ({ groupId }) => {
-    // verify membership before joining room
     const ok = await groupsService.isMember(groupId, socket.user.id);
     if (!ok) return;
 
     socket.join(`group:${groupId}`);
 
-    // send full history + unread info (same logic as presence.socket JOIN)
     const messages = await messagesRepo.getGroupMessages(groupId);
     const lastSeen = await presenceRepo.getGroupLastSeen(socket.user.id, groupId);
-
     const unreadCount = lastSeen
       ? messages.filter((m) => new Date(m.created_at) > new Date(lastSeen)).length
       : 0;
@@ -54,8 +88,7 @@ module.exports = function (io, socket) {
     });
   });
 
-  // ─── MARK GROUP AS READ ──────────────────────────────────────────────────
-  // Frontend emits this whenever the user opens or switches to a group.
+  // ─── MARK GROUP AS READ ───────────────────────────────────────────────────
   socket.on(EVENTS.GROUP_READ, async ({ groupId }) => {
     await presenceRepo.setGroupLastSeen(socket.user.id, groupId);
   });

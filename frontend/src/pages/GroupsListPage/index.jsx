@@ -39,46 +39,36 @@ export default function GroupsListPage() {
     setShowModal(true);
   };
 
-  const handleCreate = async () => {
-    if (!groupName.trim()) {
-      setError('O nome do grupo é obrigatório.');
-      return;
-    }
-    setCreating(true);
-    setError('');
+  // Em GroupsListPage.jsx — substitui o handleCreate inteiro por este.
+// Não precisa de fetch nem de configurar proxy.
 
-    try {
-      const token = localStorage.getItem('token');
-      const res   = await fetch('/api/groups', {
-        method:  'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization:  `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name:      groupName.trim(),
-          memberIds: [...selected],
-        }),
-      });
+const handleCreate = () => {
+  if (!groupName.trim()) {
+    setError('O nome do grupo é obrigatório.');
+    return;
+  }
+  setCreating(true);
+  setError('');
 
-      if (!res.ok) throw new Error('Erro ao criar grupo');
+  // pede ao backend para criar o grupo via socket
+  socket.emit('group:create', {
+    name:      groupName.trim(),
+    memberIds: [...selected],
+  });
 
-      const group = await res.json();
+  // o servidor responde com 'group:created' (ver group.socket.js abaixo)
+  socket.once('group:created', (group) => {
+    setCreating(false);
+    addGroup(group);
+    setShowModal(false);
+    navigate(group.id === 1 ? '/chat/group' : `/chat/group/${group.id}`);
+  });
 
-      // add to context immediately
-      addGroup(group);
-
-      // ask socket to join the room + get history
-      socket.emit('join:group', { groupId: group.id });
-
-      setShowModal(false);
-      navigate(`/chat/group/${group.id}`);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
-    }
-  };
+  socket.once('group:create:error', (msg) => {
+    setCreating(false);
+    setError(msg || 'Erro ao criar grupo.');
+  });
+};
 
   // Sort: global group first, then by name
   const sortedGroups = useMemo(() => {
