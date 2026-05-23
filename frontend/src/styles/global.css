@@ -1554,3 +1554,215 @@ button {
   50% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(79, 70, 229, 0); }
   100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Paste these into your existing CSS.
+   They complement whatever you already have for .chat-container etc.
+───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Message timestamps ────────────────────────────────────────────────────── */
+.msg-time {
+  font-size: 0.68rem;
+  color: var(--c-muted, #888);
+  text-align: right;
+  margin-top: 2px;
+}
+.msg.mine .msg-time { color: rgba(255,255,255,0.6); }
+
+/* ── Date / unread dividers ────────────────────────────────────────────────── */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  color: var(--c-muted, #888);
+  font-size: 0.75rem;
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--c-border, #ddd);
+}
+.date-divider span  { white-space: nowrap; padding: 0 4px; }
+.unread-divider     { color: #e55; }
+.unread-divider::before,
+.unread-divider::after { background: #e55; }
+
+/* ── Typing indicator ──────────────────────────────────────────────────────── */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--c-muted, #888);
+  padding: 4px 8px;
+  font-style: italic;
+}
+.typing-dots {
+  display: flex;
+  gap: 3px;
+}
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-muted, #aaa);
+  animation: blink 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(1); }
+  40%           { opacity: 1;   transform: scale(1.2); }
+}
+
+/* ── Presence label under partner name ─────────────────────────────────────── */
+.presence-label {
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+.presence-label.online  { color: #22c55e; }
+.presence-label.offline { color: var(--c-muted, #aaa); }
+
+/* ── Toasts ─────────────────────────────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 80px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+}
+.toast {
+  background: var(--c-surface, #1e1e2e);
+  color: var(--c-text, #cdd6f4);
+  border: 1px solid var(--c-border, #313244);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  animation: slideIn 0.25s ease;
+  max-width: 280px;
+}
+.toast-clickable {
+  cursor: pointer;
+}
+.toast-clickable:hover {
+  border-color: var(--c-accent, #89b4fa);
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Groups list ─────────────────────────────────────────────────────────────── */
+.groups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.group-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.tag-global {
+  font-size: 0.72rem;
+  color: var(--c-accent, #89b4fa);
+  margin-left: 6px;
+}
+
+/* ── Modal ───────────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: var(--c-surface, #1e1e2e);
+  border: 1px solid var(--c-border, #313244);
+  border-radius: 16px;
+  padding: 24px;
+  width: min(420px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.modal-header h3 { margin: 0; }
+.modal-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--c-muted, #888);
+  margin-bottom: 4px;
+}
+.modal-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--c-border, #313244);
+  background: var(--c-bg, #181825);
+  color: var(--c-text, #cdd6f4);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+.modal-user-list {
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--c-border, #313244);
+  border-radius: 8px;
+}
+.modal-user-item {
+  display: flex;
+  align-items: center;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--c-border, #313244);
+}
+.modal-user-item:last-child { border-bottom: none; }
+.modal-user-item:hover      { background: var(--c-hover, #313244); }
+.modal-user-item.selected   { background: var(--c-accent-dim, #1e3a5f); }
+.modal-selected-count {
+  font-size: 0.78rem;
+  color: var(--c-accent, #89b4fa);
+  margin-top: 6px;
+}
+.modal-error {
+  color: #f38ba8;
+  font-size: 0.82rem;
+  margin-top: 6px;
+}
+
+/* ── Primary button ──────────────────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--c-accent, #89b4fa);
+  color: #1e1e2e;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: opacity 0.15s;
+}
+.btn-primary:hover    { opacity: 0.88; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }

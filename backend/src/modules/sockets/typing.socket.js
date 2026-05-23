@@ -1,25 +1,53 @@
-// typing.socket.js
-
-const typingService = require('../typing/typing.service');
-const EVENTS = require('./events');
+const presenceService = require('../presence/presence.service');
+const EVENTS          = require('./events');
 
 module.exports = function (io, socket) {
-  socket.on(EVENTS.TYPING_START, async ({ toId }) => {
-    const targetSocketId = await typingService.handleTypingStart({
-      fromId: socket.user.id,
-      toId,
-    });
+  const user = socket.user;
 
-    if (targetSocketId) {
-      io.to(targetSocketId).emit(EVENTS.TYPING, {
-        from: socket.user.id,
-        fromUsername: socket.user.username,
-      });
+  // ── TYPING START ──────────────────────────────────────────────────────────
+  // Client emits: { type: 'private' | 'group', id: partnerId | groupId }
+  socket.on(EVENTS.TYPING_START, async ({ type, id }) => {
+    if (!type || !id) return;
+
+    const payload = {
+      type,
+      id,
+      userId:   user.id,
+      username: user.username,
+      active:   true,
+    };
+
+    if (type === 'private') {
+      // send only to the partner if online
+      const targetSocketId = await presenceService.getSocketId(id);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('typing:update', payload);
+      }
+    } else if (type === 'group') {
+      // broadcast to everyone else in the group room
+      socket.to(`group:${id}`).emit('typing:update', payload);
     }
   });
 
-  // typing stop pode ser omitido no cliente com timeout
-  socket.on(EVENTS.TYPING_STOP, ({ toId }) => {
-    // opcional: enviar um evento 'typing:stop'
+  // ── TYPING STOP ───────────────────────────────────────────────────────────
+  socket.on(EVENTS.TYPING_STOP, async ({ type, id }) => {
+    if (!type || !id) return;
+
+    const payload = {
+      type,
+      id,
+      userId:   user.id,
+      username: user.username,
+      active:   false,
+    };
+
+    if (type === 'private') {
+      const targetSocketId = await presenceService.getSocketId(id);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('typing:update', payload);
+      }
+    } else if (type === 'group') {
+      socket.to(`group:${id}`).emit('typing:update', payload);
+    }
   });
 };

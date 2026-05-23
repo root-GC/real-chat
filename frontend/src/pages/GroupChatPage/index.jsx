@@ -1,32 +1,41 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useChatContext } from '../../store/chatContext';
 import socket from '../../services/socket';
 
+// Format timestamp as HH:MM
 function fmtTime(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+  const d = new Date(iso);
+  return d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
 }
 
+// Format date divider label
 function fmtDateLabel(iso) {
   if (!iso) return '';
   const d    = new Date(iso);
   const now  = new Date();
-  const diff = new Date(now.setHours(0,0,0,0)) - new Date(d.setHours(0,0,0,0));
+  const diff = now.setHours(0,0,0,0) - d.setHours(0,0,0,0);
   if (diff === 0)        return 'Hoje';
   if (diff === 86400000) return 'Ontem';
   return new Date(iso).toLocaleDateString('pt-PT', { day: '2-digit', month: 'long' });
 }
 
-export default function ChatPage() {
-  const { partnerId } = useParams();
-  const navigate      = useNavigate();
+export default function GroupChatPage() {
+  // /chat/group       → groupId defaults to 1
+  // /chat/group/:groupId → custom group
+  const { groupId: paramId } = useParams();
+  const groupId   = paramId ? Number(paramId) : 1;
+  const navigate  = useNavigate();
 
   const {
     users,
     unread,
-    privateMessages,
+    groupMessages,
+    groupUnread,
+    groups,
     resetUnread,
+    resetGroupUnread,
     addOptimisticMessage,
     getTypingText,
     toasts,
@@ -34,70 +43,73 @@ export default function ChatPage() {
 
   const currentUser    = JSON.parse(localStorage.getItem('user') || 'null');
   const messagesEndRef = useRef(null);
-  const typingTimer    = useRef(null);
+  const inputRef       = useRef(null);
   const [showSidebar, setShowSidebar] = useState(false);
 
-  const partner         = users?.[partnerId];
-  const currentMessages = privateMessages?.[partnerId] || [];
-  const typingText      = getTypingText('private', partnerId);
+  const messages     = groupMessages?.[groupId] || [];
+  const unreadInfo   = groupUnread?.[groupId];
+  const typingText   = getTypingText('group', groupId);
+  const groupInfo    = groups.find((g) => g.id === groupId);
+  const groupName    = groupInfo?.name || (groupId === 1 ? 'Geral' : `Grupo ${groupId}`);
 
-  // ── mark read + load history ───────────────────────────────────────────────
+  // ── on mount: join room + mark read ────────────────────────────────────────
   useEffect(() => {
-    if (!partnerId) return;
-    resetUnread(partnerId);
+    if (!socket.connected) return;
 
-    const loadHistory = () => {
-      socket.emit('privateHistory', {
-        myId:    currentUser.id,
-        otherId: Number(partnerId),
-      });
+    // ask server for latest history (catches messages that arrived while offline)
+    socket.emit('join:group', { groupId });
+    socket.emit('group:read',  { groupId });
+
+    resetGroupUnread(groupId);
+  }, [groupId, resetGroupUnread]);
+
+  // also re-request history when socket reconnects
+  useEffect(() => {
+    const onConnect = () => {
+      socket.emit('join:group', { groupId });
+      socket.emit('group:read',  { groupId });
     };
+    socket.on('connect', onConnect);
+    return () => socket.off('connect', onConnect);
+  }, [groupId]);
 
-    socket.on('connect', loadHistory);
-    if (socket.connected) loadHistory();
-
-    return () => socket.off('connect', loadHistory);
-  }, [partnerId, currentUser.id, resetUnread]);
-
-  // ── scroll on new messages ─────────────────────────────────────────────────
+  // scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentMessages]);
+  }, [messages]);
 
-  // ── typing ─────────────────────────────────────────────────────────────────
+  // ── typing indicator ───────────────────────────────────────────────────────
+  const typingTimer = useRef(null);
+
   const handleInputChange = () => {
-    socket.emit('typing:start', { type: 'private', id: Number(partnerId) });
+    socket.emit('typing:start', { type: 'group', id: groupId });
     clearTimeout(typingTimer.current);
     typingTimer.current = setTimeout(() => {
-      socket.emit('typing:stop', { type: 'private', id: Number(partnerId) });
+      socket.emit('typing:stop', { type: 'group', id: groupId });
     }, 2000);
   };
 
-  // ── send ───────────────────────────────────────────────────────────────────
+  // ── send message ───────────────────────────────────────────────────────────
   const handleSend = useCallback(
     (text) => {
       if (!text.trim()) return;
       clearTimeout(typingTimer.current);
-      socket.emit('typing:stop', { type: 'private', id: Number(partnerId) });
+      socket.emit('typing:stop', { type: 'group', id: groupId });
 
-      const clientId = 'c_' + Date.now() + Math.random();
+      const clientId = 'c_' + Date.now();
 
-      addOptimisticMessage('private', {
+      addOptimisticMessage('group', {
         clientId,
-        content:     text,
+        content: text,
         sender_id:   currentUser.id,
         sender_name: currentUser.username,
-        receiver_id: Number(partnerId),
+        group_id:    groupId,
         created_at:  new Date().toISOString(),
       });
 
-      socket.emit('private:send', {
-        toId: Number(partnerId),
-        content: text,
-        clientId,
-      });
+      socket.emit('group:send', { groupId, content: text, clientId });
     },
-    [partnerId, currentUser, addOptimisticMessage]
+    [groupId, currentUser, addOptimisticMessage]
   );
 
   const handleEdit = (msg) => {
@@ -111,31 +123,42 @@ export default function ChatPage() {
     socket.emit('message:delete', { messageId: msg.id });
   };
 
-  // ── render with date dividers ──────────────────────────────────────────────
+  // ── render helpers ─────────────────────────────────────────────────────────
+  // Inject date dividers + unread divider into message list
   function buildRenderList(msgs) {
-    const result  = [];
-    let lastDate  = null;
+    const result = [];
+    let lastDate = null;
+
     msgs.forEach((msg, i) => {
-      const label = fmtDateLabel(msg.created_at);
-      if (label !== lastDate) {
-        result.push({ type: 'date-divider', label, key: `date-${i}` });
-        lastDate = label;
+      const msgDate = fmtDateLabel(msg.created_at);
+
+      // date separator
+      if (msgDate !== lastDate) {
+        result.push({ type: 'date-divider', label: msgDate, key: `date-${i}` });
+        lastDate = msgDate;
       }
+
+      // unread divider — insert before the first unread message
+      if (
+        unreadInfo?.count > 0 &&
+        unreadInfo?.since &&
+        new Date(msg.created_at) > new Date(unreadInfo.since) &&
+        (i === 0 || new Date(msgs[i - 1].created_at) <= new Date(unreadInfo.since))
+      ) {
+        result.push({
+          type:  'unread-divider',
+          label: `${unreadInfo.count} mensagen${unreadInfo.count > 1 ? 's' : ''} não lida${unreadInfo.count > 1 ? 's' : ''}`,
+          key:   'unread-divider',
+        });
+      }
+
       result.push({ type: 'message', msg, key: msg.id || msg.clientId });
     });
+
     return result;
   }
 
-  if (!partner) {
-    return (
-      <div className="chat-container">
-        <p>Utilizador não encontrado.</p>
-        <button onClick={() => navigate('/home')}>Voltar</button>
-      </div>
-    );
-  }
-
-  const renderList = buildRenderList(currentMessages);
+  const renderList = buildRenderList(messages);
 
   return (
     <div className="chat-container">
@@ -146,21 +169,19 @@ export default function ChatPage() {
           <button className="icon-btn" onClick={() => navigate('/home')}>
             <span className="material-icons">arrow_back</span>
           </button>
-          <div>
-            <h2>{partner.username}</h2>
-            <span className={`presence-label ${partner.online ? 'online' : 'offline'}`}>
-              {partner.online ? 'online' : 'offline'}
-            </span>
-          </div>
+          <h2>{groupName}</h2>
         </div>
-        <button className="icon-btn" onClick={() => setShowSidebar(!showSidebar)}>
-          <span className="material-icons">menu</span>
-        </button>
+        <div className="header-right">
+          <button className="icon-btn" onClick={() => setShowSidebar(!showSidebar)}>
+            <span className="material-icons">menu</span>
+          </button>
+        </div>
       </header>
 
       {/* MAIN */}
       <div className="chat-main">
 
+        {/* MESSAGES */}
         <div className="messages">
           {renderList.map((item) => {
             if (item.type === 'date-divider') {
@@ -171,8 +192,16 @@ export default function ChatPage() {
               );
             }
 
-            const { msg }  = item;
-            const isMine   = msg.sender_id === currentUser?.id;
+            if (item.type === 'unread-divider') {
+              return (
+                <div key={item.key} className="divider unread-divider">
+                  <span>↓ {item.label}</span>
+                </div>
+              );
+            }
+
+            const { msg } = item;
+            const isMine  = msg.sender_id === currentUser?.id;
 
             return (
               <div
@@ -181,6 +210,7 @@ export default function ChatPage() {
               >
                 <div className="msg-header">
                   <span className="msg-sender">{msg.sender_name}</span>
+
                   {isMine && (
                     <span className="msg-actions">
                       <button onClick={() => handleEdit(msg)}>
@@ -195,7 +225,9 @@ export default function ChatPage() {
 
                 <div className="msg-body">
                   {msg.content}
-                  {msg._optimistic && <span className="edited-tag"> ⏳</span>}
+                  {msg._optimistic && (
+                    <span className="edited-tag"> ⏳</span>
+                  )}
                   {msg.edited && !msg._optimistic && (
                     <span className="edited-tag"> (editado)</span>
                   )}
@@ -219,7 +251,7 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* SIDEBAR */}
+        {/* SIDEBAR — contacts + groups */}
         <div className={`user-list-sidebar ${showSidebar ? 'open' : ''}`}>
           <h3>Contactos</h3>
           {Object.values(users || {}).map((u) => (
@@ -229,7 +261,6 @@ export default function ChatPage() {
               onClick={() => {
                 navigate(`/chat/private/${u.id}`);
                 setShowSidebar(false);
-                resetUnread(u.id);
               }}
             >
               <span>{u.username}</span>
@@ -253,9 +284,10 @@ export default function ChatPage() {
         }}
       >
         <input
+          ref={inputRef}
           type="text"
           name="message"
-          placeholder="Escreve..."
+          placeholder="Escreve uma mensagem..."
           autoComplete="off"
           onChange={handleInputChange}
         />
@@ -276,7 +308,6 @@ export default function ChatPage() {
           </div>
         ))}
       </div>
-
     </div>
   );
 }

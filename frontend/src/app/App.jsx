@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ChatProvider } from '../store/chatContext';
-import LoginPage from '../pages/Login';
-import HomePage from '../pages/Home';
-import ChatPage from '../pages/Chat';
-import GroupsPage from '../pages/Groups';
-import ProfilePage from '../pages/Profile';
+import LoginPage      from '../pages/Login';
+import HomePage       from '../pages/Home';
+import ChatPage       from '../pages/Chat';
+import GroupChatPage  from '../pages/GroupChatPage';
+import GroupsListPage from '../pages/GroupsListPage';
+import ProfilePage    from '../pages/Profile';
 
 function App() {
-  const [user, setUser] = useState(() => {
-    const stored = localStorage.getItem('user');
-    return stored ? JSON.parse(stored) : null;
-  });
+  const [user,  setUser]  = useState(() => JSON.parse(localStorage.getItem('user')  || 'null'));
   const [token, setToken] = useState(() => localStorage.getItem('token'));
 
   useEffect(() => {
@@ -24,44 +22,29 @@ function App() {
   }, []);
 
   const isAuthenticated = !!user && !!token;
+  const guard = (el) => (isAuthenticated ? el : <Navigate to="/login" replace />);
 
-  // FIX: removed the conflicting /chat/:mode?/:userId? generic route.
-  // Private chat lives exclusively at /chat/private/:partnerId.
-  // Group chat lives at /chat/group (served by GroupsPage).
   return (
     <ChatProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login"                    element={<LoginPage />} />
+          <Route path="/home"                     element={guard(<HomePage />)} />
 
-          <Route
-            path="/home"
-            element={isAuthenticated ? <HomePage /> : <Navigate to="/login" replace />}
-          />
+          {/* Private 1-to-1 */}
+          <Route path="/chat/private/:partnerId"  element={guard(<ChatPage />)} />
 
-          {/* Private 1-to-1 chat */}
-          <Route
-            path="/chat/private/:partnerId"
-            element={isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />}
-          />
+          {/* Global group (id=1) */}
+          <Route path="/chat/group"               element={guard(<GroupChatPage />)} />
 
-          {/* Group / global chat */}
-          <Route
-            path="/chat/group"
-            element={isAuthenticated ? <GroupsPage /> : <Navigate to="/login" replace />}
-          />
+          {/* Custom group by id */}
+          <Route path="/chat/group/:groupId"      element={guard(<GroupChatPage />)} />
 
-          <Route
-            path="/groups"
-            element={isAuthenticated ? <GroupsPage /> : <Navigate to="/login" replace />}
-          />
+          {/* Groups management (list + create) */}
+          <Route path="/groups"                   element={guard(<GroupsListPage />)} />
 
-          <Route
-            path="/profile"
-            element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />}
-          />
-
-          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="/profile"                  element={guard(<ProfilePage />)} />
+          <Route path="/"                         element={<Navigate to="/home" replace />} />
         </Routes>
       </BrowserRouter>
     </ChatProvider>
