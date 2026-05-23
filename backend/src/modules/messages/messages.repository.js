@@ -1,4 +1,3 @@
-// messages.repository.js
 const db = require('../../config/db');
 
 async function create({ sender_id, receiver_id, group_id, content, type = 'text', status = 'sent' }) {
@@ -14,7 +13,7 @@ async function create({ sender_id, receiver_id, group_id, content, type = 'text'
 async function findByIds(ids) {
   if (ids.length === 0) return [];
   const res = await db.query(
-    `SELECT m.*, u.username as sender_name
+    `SELECT m.*, u.username AS sender_name
      FROM messages m
      JOIN users u ON u.id = m.sender_id
      WHERE m.id = ANY($1)
@@ -26,7 +25,7 @@ async function findByIds(ids) {
 
 async function getConversation(userId, otherId) {
   const res = await db.query(
-    `SELECT m.*, u.username as sender_name
+    `SELECT m.*, u.username AS sender_name
      FROM messages m
      JOIN users u ON u.id = m.sender_id
      WHERE (sender_id = $1 AND receiver_id = $2)
@@ -39,10 +38,11 @@ async function getConversation(userId, otherId) {
 
 async function getGroupMessages(groupId) {
   const res = await db.query(
-    `SELECT m.*, u.username as sender_name
+    `SELECT m.*, u.username AS sender_name
      FROM messages m
      JOIN users u ON u.id = m.sender_id
      WHERE m.group_id = $1
+       AND m.deleted_at IS NULL
      ORDER BY m.created_at ASC`,
     [groupId]
   );
@@ -73,11 +73,12 @@ async function markAsDeleted(id) {
 }
 
 module.exports = {
-  create, findByIds,
+  create,
+  findByIds,
   getConversation,
   getGroupMessages,
   getMessageById,
   updateContent,
   markAsDeleted,
-  updateStatus
+  updateStatus,
 };
