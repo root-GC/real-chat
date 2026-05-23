@@ -25,15 +25,42 @@ function App() {
 
   const isAuthenticated = !!user && !!token;
 
+  // FIX: removed the conflicting /chat/:mode?/:userId? generic route.
+  // Private chat lives exclusively at /chat/private/:partnerId.
+  // Group chat lives at /chat/group (served by GroupsPage).
   return (
     <ChatProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/home" element={isAuthenticated ? <HomePage /> : <Navigate to="/login" replace />} />
-          <Route path="/chat/:mode?/:userId?" element={isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />} />
-          <Route path="/groups" element={isAuthenticated ? <GroupsPage /> : <Navigate to="/login" replace />} />
-          <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />} />
+
+          <Route
+            path="/home"
+            element={isAuthenticated ? <HomePage /> : <Navigate to="/login" replace />}
+          />
+
+          {/* Private 1-to-1 chat */}
+          <Route
+            path="/chat/private/:partnerId"
+            element={isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />}
+          />
+
+          {/* Group / global chat */}
+          <Route
+            path="/chat/group"
+            element={isAuthenticated ? <GroupsPage /> : <Navigate to="/login" replace />}
+          />
+
+          <Route
+            path="/groups"
+            element={isAuthenticated ? <GroupsPage /> : <Navigate to="/login" replace />}
+          />
+
+          <Route
+            path="/profile"
+            element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />}
+          />
+
           <Route path="/" element={<Navigate to="/home" replace />} />
         </Routes>
       </BrowserRouter>

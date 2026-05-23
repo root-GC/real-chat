@@ -1,3 +1,4 @@
+// messages.repository.js
 const db = require('../../config/db');
 
 async function create({ sender_id, receiver_id, group_id, content, type = 'text', status = 'sent' }) {

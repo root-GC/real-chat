@@ -1,3 +1,5 @@
+// offline.service.js
+
 const redis = require('../../config/redis');
 
 const QUEUE_KEY = (userId) => `offline_queue:${userId}`;

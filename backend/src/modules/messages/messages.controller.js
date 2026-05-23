@@ -1,3 +1,5 @@
+// messages.controller.js
+
 const service = require('./messages.service');
 
 async function sendPrivate(req, res, next) {

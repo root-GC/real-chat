@@ -1,3 +1,4 @@
+// presence.repository.js
 const redis = require('../../config/redis');
 
 const USER_KEY = (userId) => `presence:user:${userId}`;

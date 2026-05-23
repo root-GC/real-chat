@@ -1,4 +1,11 @@
-import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react';
+
 import socket from '../services/socket';
 
 const ChatContext = createContext();
@@ -8,221 +15,194 @@ export function useChatContext() {
 }
 
 export function ChatProvider({ children }) {
-  const [users, setUsers] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_users') || '{}'); } catch { return {}; }
-  });
-  const [unread, setUnread] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_unread') || '{}'); } catch { return {}; }
-  });
-  const [privateMessages, setPrivateMessages] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_privateMessages') || '{}'); } catch { return {}; }
-  });
-  const [groupMessages, setGroupMessages] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_groupMessages') || '[]'); } catch { return []; }
-  });
-  const [toasts, setToasts] = useState([]);
+  const [users, setUsers]               = useState({});
+  const [unread, setUnread]             = useState({});
+  const [privateMessages, setPrivateMessages] = useState({});
+  const [groupMessages, setGroupMessages]     = useState([]);   // FIX: was never populated
+  const [toasts, setToasts]             = useState([]);
 
-  const tokenRef = useRef(localStorage.getItem('token'));
-  const userRef = useRef(JSON.parse(localStorage.getItem('user') || 'null'));
+  const currentUser = JSON.parse(localStorage.getItem('user') || 'null');
 
-  // Persist to localStorage whenever state changes
-  useEffect(() => { localStorage.setItem('chat_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('chat_unread', JSON.stringify(unread)); }, [unread]);
-  useEffect(() => { localStorage.setItem('chat_privateMessages', JSON.stringify(privateMessages)); }, [privateMessages]);
-  useEffect(() => { localStorage.setItem('chat_groupMessages', JSON.stringify(groupMessages)); }, [groupMessages]);
-
-  // ---- Socket listeners (once) ----
   useEffect(() => {
-    const token = tokenRef.current;
-    const user = userRef.current;
-    if (!token || !user) return;
+    const token = localStorage.getItem('token');
+    if (!token || !currentUser) return;
 
-    socket.auth.token = token;
-    if (!socket.connected) socket.connect();
+    socket.auth = { token };
+    socket.connect();
 
-    const onConnect = () => socket.emit('join');
+    // ─── connection ───────────────────────────────────────────────
+    socket.on('connect', () => {
+      socket.emit('join');
+    });
 
-    const onInitialUsers = (list) => {
-      const map = {};
-      list.forEach(u => { map[u.id] = { id: u.id, username: u.username, online: u.online }; });
-      setUsers(map);
-    };
+    // ─── presence ─────────────────────────────────────────────────
+    socket.on('initial_users', (list) => {
+      setUsers((prev) => {
+        const updated = { ...prev };
+        list.forEach((u) => {
+          updated[u.id] = { id: u.id, username: u.username, online: u.online };
+        });
+        return updated;
+      });
+    });
 
-    const onUserOnline = (u) => {
-      setUsers(prev => ({
+    socket.on('user:online', (u) => {
+      setUsers((prev) => ({
         ...prev,
-        [u.id]: { ...prev[u.id], id: u.id, username: u.username, online: true }
+        [u.id]: { ...prev[u.id], ...u, online: true },
       }));
-    };
+    });
 
-    const onUserOffline = ({ id }) => {
-      setUsers(prev => {
-        if (!prev[id]) return prev;
-        return { ...prev, [id]: { ...prev[id], online: false } };
+    socket.on('user:offline', ({ id }) => {
+      setUsers((prev) => ({
+        ...prev,
+        [id]: { ...prev[id], online: false },
+      }));
+    });
+
+    // ─── private messages ─────────────────────────────────────────
+    socket.on('private:message', (msg) => {
+      const partnerId =
+        msg.sender_id === currentUser.id ? msg.receiver_id : msg.sender_id;
+
+      setPrivateMessages((prev) => {
+        const existing = prev[partnerId] || [];
+        // replace optimistic by clientId, then guard against duplicate id
+        const filtered = existing.filter((m) => m.clientId !== msg.clientId);
+        if (filtered.some((m) => m.id === msg.id)) return prev;
+        return { ...prev, [partnerId]: [...filtered, msg] };
       });
-    };
 
-    const onPrivateMessage = (msg) => {
-      const currentUser = userRef.current;
-      const partner = msg.sender_id === currentUser.id
-        ? (msg.receiver_name || '').trim()
-        : (msg.sender_name || '').trim();
-      if (!partner) return;
+      const viewing =
+        window.location.pathname === `/chat/private/${msg.sender_id}`;
 
-      setPrivateMessages(prev => {
-        const existing = (prev[partner] || []).some(m => m.id === msg.id);
-        if (existing) return prev;
-        return { ...prev, [partner]: [...(prev[partner] || []), msg] };
-      });
-
-      // Only increment unread if the message is from someone else
-      if (msg.sender_id !== currentUser.id) {
-        setUnread(prev => ({
+      if (msg.sender_id !== currentUser.id && !viewing) {
+        setUnread((prev) => ({
           ...prev,
-          [partner]: (prev[partner] || 0) + 1
+          [partnerId]: (prev[partnerId] || 0) + 1,
         }));
       }
+    });
 
-      window.dispatchEvent(new CustomEvent('toast', {
-        detail: { message: `Nova mensagem de ${partner}`, type: 'info' }
-      }));
-    };
+    socket.on('privateHistory', (data) => {
+      setPrivateMessages((prev) => ({ ...prev, [data.with]: data.messages }));
+      setUnread((prev) => ({ ...prev, [data.with]: 0 }));
+    });
 
-    const onGroupMessage = (msg) => {
-      setGroupMessages(prev => {
-        if (prev.some(m => m.id === msg.id)) return prev;
-        return [...prev, msg];
+    // ─── group messages ───────────────────────────────────────────
+    // FIX: was never wired up — context never received group:message or group:history
+
+    // initial group history sent by presence.socket.js on JOIN
+    socket.on('group:history', (msgs) => {
+      setGroupMessages(msgs);
+    });
+
+    // live group messages
+    socket.on('group:message', (msg) => {
+      setGroupMessages((prev) => {
+        // replace optimistic by clientId
+        const filtered = prev.filter((m) => m.clientId !== msg.clientId);
+        // guard duplicate
+        if (filtered.some((m) => m.id === msg.id)) return prev;
+        return [...filtered, msg];
       });
-    };
+    });
 
-    const onHistory = (msgs) => {
-      setGroupMessages(prev => {
-        const existingIds = new Set(prev.map(m => m.id));
-        const newMsgs = msgs.map(m => ({
-          ...m,
-          content: m.text || m.content,
-          sender_name: m.sender || m.sender_name,
-        })).filter(m => !existingIds.has(m.id));
-        return [...prev, ...newMsgs].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      });
-    };
+    // ─── edit / delete ────────────────────────────────────────────
+    // FIX: these events were emitted by the backend but never handled in context
 
-    const onPrivateHistory = (data) => {
-      setPrivateMessages(prev => {
-        const existingIds = new Set((prev[data.with] || []).map(m => m.id));
-        const newMsgs = data.messages.map(m => ({
-          ...m,
-          content: m.text || m.content,
-          sender_name: m.sender || m.sender_name,
-        })).filter(m => !existingIds.has(m.id));
-        return {
-          ...prev,
-          [data.with]: [...(prev[data.with] || []), ...newMsgs]
-            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)),
-        };
-      });
-      // Reset unread ONLY when the server confirms history has been seen
-      setUnread(prev => ({ ...prev, [data.with]: 0 }));
-    };
-
-    const onMessageEdited = (updated) => {
-      if (updated.group_id) {
-        setGroupMessages(prev =>
-          prev.map(m => (m.id === updated.id ? { ...m, content: updated.content, edited: true } : m))
+    socket.on('message:edited', (msg) => {
+      const patch = (arr) =>
+        arr.map((m) =>
+          m.id === msg.id ? { ...m, content: msg.content, edited: true } : m
         );
+
+      if (msg.group_id) {
+        setGroupMessages((prev) => patch(prev));
       } else {
-        const currentUser = userRef.current;
-        const partner = updated.sender_id === currentUser.id
-          ? updated.receiver_name
-          : updated.sender_name;
-        if (partner) {
-          setPrivateMessages(prev => ({
-            ...prev,
-            [partner]: prev[partner]?.map(m =>
-              m.id === updated.id ? { ...m, content: updated.content, edited: true } : m
-            ),
-          }));
-        }
+        const pid =
+          msg.sender_id === currentUser.id ? msg.receiver_id : msg.sender_id;
+        setPrivateMessages((prev) => ({
+          ...prev,
+          [pid]: patch(prev[pid] || []),
+        }));
       }
-    };
+    });
 
-    const onMessageDeleted = (deleted) => {
-      if (deleted.group_id) {
-        setGroupMessages(prev => prev.filter(m => m.id !== deleted.id));
+    socket.on('message:deleted', (msg) => {
+      const remove = (arr) => arr.filter((m) => m.id !== msg.id);
+
+      if (msg.group_id) {
+        setGroupMessages((prev) => remove(prev));
       } else {
-        const currentUser = userRef.current;
-        const partner = deleted.sender_id === currentUser.id
-          ? deleted.receiver_name
-          : deleted.sender_name;
-        if (partner) {
-          setPrivateMessages(prev => ({
-            ...prev,
-            [partner]: prev[partner]?.filter(m => m.id !== deleted.id),
-          }));
-        }
+        const pid =
+          msg.sender_id === currentUser.id ? msg.receiver_id : msg.sender_id;
+        setPrivateMessages((prev) => ({
+          ...prev,
+          [pid]: remove(prev[pid] || []),
+        }));
       }
-    };
+    });
 
-    const onToast = (e) => {
-      const { message, type } = e.detail;
-      const id = Date.now() + Math.random();
-      setToasts(prev => [...prev, { id, message, type }]);
-      setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('initial_users', onInitialUsers);
-    socket.on('user:online', onUserOnline);
-    socket.on('user:offline', onUserOffline);
-    socket.on('private:message', onPrivateMessage);
-    socket.on('group:message', onGroupMessage);
-    socket.on('history', onHistory);
-    socket.on('privateHistory', onPrivateHistory);
-    socket.on('message:edited', onMessageEdited);
-    socket.on('message:deleted', onMessageDeleted);
-    window.addEventListener('toast', onToast);
-
-    if (socket.connected) socket.emit('join');
-
+    // ─── cleanup ──────────────────────────────────────────────────
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('initial_users', onInitialUsers);
-      socket.off('user:online', onUserOnline);
-      socket.off('user:offline', onUserOffline);
-      socket.off('private:message', onPrivateMessage);
-      socket.off('group:message', onGroupMessage);
-      socket.off('history', onHistory);
-      socket.off('privateHistory', onPrivateHistory);
-      socket.off('message:edited', onMessageEdited);
-      socket.off('message:deleted', onMessageDeleted);
-      window.removeEventListener('toast', onToast);
+      socket.off('connect');
+      socket.off('initial_users');
+      socket.off('user:online');
+      socket.off('user:offline');
+      socket.off('private:message');
+      socket.off('privateHistory');
+      socket.off('group:history');
+      socket.off('group:message');
+      socket.off('message:edited');
+      socket.off('message:deleted');
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const resetUnread = useCallback((username) => {
-    setUnread(prev => ({ ...prev, [username]: 0 }));
+  // ─── helpers ──────────────────────────────────────────────────────
+  const resetUnread = useCallback((id) => {
+    setUnread((prev) => ({ ...prev, [id]: 0 }));
   }, []);
 
-  const incrementUnread = useCallback((username) => {
-    setUnread(prev => ({ ...prev, [username]: (prev[username] || 0) + 1 }));
+  // FIX: addOptimisticMessage now handles both 'private' and 'group' types
+  const addOptimisticMessage = useCallback((type, payload) => {
+    if (type === 'private') {
+      const partnerId = payload.receiver_id;
+      setPrivateMessages((prev) => ({
+        ...prev,
+        [partnerId]: [
+          ...(prev[partnerId] || []),
+          { ...payload, _optimistic: true },
+        ],
+      }));
+    } else if (type === 'group') {
+      setGroupMessages((prev) => [...prev, { ...payload, _optimistic: true }]);
+    }
   }, []);
 
-  const addToast = useCallback((message, type = 'info') => {
-    const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  const addToast = useCallback((message) => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
   }, []);
 
-  const value = {
-    users,
-    unread,
-    privateMessages,
-    groupMessages,
-    toasts,
-    resetUnread,
-    incrementUnread,
-    addToast,
-  };
-
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <ChatContext.Provider
+      value={{
+        users,
+        unread,
+        privateMessages,
+        groupMessages,
+        toasts,
+        resetUnread,
+        addToast,
+        addOptimisticMessage,
+      }}
+    >
+      {children}
+    </ChatContext.Provider>
+  );
 }

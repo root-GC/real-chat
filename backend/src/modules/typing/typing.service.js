@@ -1,3 +1,5 @@
+// typing.service.js
+
 const presenceService = require('../presence/presence.service');
 
 async function handleTypingStart({ fromId, toId }) {

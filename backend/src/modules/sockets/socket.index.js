@@ -1,3 +1,5 @@
+//socket.index.js
+
 const EVENTS = require('./events');
 
 module.exports = function (io) {
@@ -5,6 +7,7 @@ module.exports = function (io) {
     // Inicializa os handlers, passando a autenticação
     require('./presence.socket')(io, socket);
     require('./chat.socket')(io, socket);
+    require('./group.socket')(io, socket);    // ← adicionado
     require('./typing.socket')(io, socket);
   });
 };

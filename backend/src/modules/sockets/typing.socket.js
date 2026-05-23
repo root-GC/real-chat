@@ -1,3 +1,5 @@
+// typing.socket.js
+
 const typingService = require('../typing/typing.service');
 const EVENTS = require('./events');
 

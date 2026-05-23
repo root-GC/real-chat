@@ -1,12 +1,14 @@
-const presenceService = require('../presence/presence.service');
-const deliveryEngine = require('../delivery/delivery.engine');
-const usersRepo = require('../users/users.repository');
-const messagesRepo = require('../messages/messages.repository'); // ← NOVO
-const { verify } = require('../../utils/jwt');
-const EVENTS = require('./events');
+const presenceService   = require('../presence/presence.service');
+const deliveryEngine    = require('../delivery/delivery.engine');
+const usersRepo         = require('../users/users.repository');
+const messagesRepo      = require('../messages/messages.repository');
+const { verify }        = require('../../utils/jwt');
+const EVENTS            = require('./events');
 
 module.exports = function (io, socket) {
+
   let user;
+
   try {
     const token = socket.handshake.auth.token;
     if (token) user = verify(token);
@@ -14,48 +16,66 @@ module.exports = function (io, socket) {
     socket.disconnect(true);
     return;
   }
+
   if (!user) return;
+
   socket.user = user;
 
+  // ─── JOIN ─────────────────────────────────────────────────────────────────
   socket.on(EVENTS.JOIN, async () => {
     if (socket.joined) return;
     socket.joined = true;
 
+    // mark online
     await presenceService.setOnline(user.id, socket.id);
-    socket.broadcast.emit('user:online', { id: user.id, username: user.username || user.email });
 
-    // Lista inicial de contactos
-    try {
-      const allUsers = await usersRepo.findAll();
-      const onlineUsers = await presenceService.getAllOnlineUsers();
-      const onlineIds = new Set(onlineUsers.map(u => u.id));
-      const usersWithStatus = allUsers.map(u => ({
+    // notify everyone else
+    socket.broadcast.emit('user:online', {
+      id: user.id,
+      username: user.username,
+    });
+
+    // ── FIX: join the default group room so group:send broadcasts reach this socket
+    socket.join('group:1');
+
+    // send full user list (online/offline) to the joining socket
+    const allUsers     = await usersRepo.findAll();
+    const onlineUsers  = await presenceService.getAllOnlineUsers();
+    const onlineSet    = new Set(onlineUsers.map((u) => Number(u.id)));
+
+    socket.emit('initial_users',
+      allUsers.map((u) => ({
         id: u.id,
         username: u.username,
-        online: onlineIds.has(String(u.id)),
-      }));
-      socket.emit('initial_users', usersWithStatus);
-    } catch (err) {
-      console.error('Erro ao enviar initial_users:', err);
-    }
+        online: onlineSet.has(Number(u.id)),
+      }))
+    );
 
-    // Enviar histórico recente do grupo (evita o refresh)
-    try {
-      const groupMessages = await messagesRepo.getGroupMessages(1); // grupo geral id=1
-      socket.emit('history', groupMessages);
-    } catch (err) {
-      console.error('Erro ao enviar histórico do grupo:', err);
-    }
+    // ── FIX: renamed from 'history' → 'group:history' so chatContext can
+    //         distinguish it from any future per-room history events
+    const groupMessages = await messagesRepo.getGroupMessages(1);
 
-    // Mensagens offline privadas
+    socket.emit('group:history',
+      groupMessages.map((m) => ({
+        ...m,
+        sender_name: m.sender_name || 'Desconhecido',
+      }))
+    );
+
+    // flush any offline private messages queued while user was away
     await deliveryEngine.flushOfflineMessages(user.id, socket);
-    console.log(`✅ ${user.username || user.email} online`);
+
+    console.log(`🟢 ${user.username} online (socket ${socket.id})`);
   });
 
+  // ─── DISCONNECT ───────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
+    // small grace window — avoids flapping on mobile reconnects
     setTimeout(async () => {
       if (socket.connected) return;
+
       const userId = await presenceService.setOffline(socket.id);
+
       if (userId) {
         io.emit('user:offline', { id: userId });
         console.log(`🔴 user ${userId} offline`);

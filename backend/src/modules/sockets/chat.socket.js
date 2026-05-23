@@ -1,91 +1,97 @@
-const messageService = require('../messages/messages.service');
-const usersRepo = require('../users/users.repository');
+const messageService  = require('../messages/messages.service');
+const usersRepo       = require('../users/users.repository');
 const presenceService = require('../presence/presence.service');
-const EVENTS = require('./events');
+const EVENTS          = require('./events');
 
 module.exports = function (io, socket) {
-  // Enviar mensagem privada
+
+  // ─── PRIVATE MESSAGE ──────────────────────────────────────────────────────
   socket.on(EVENTS.PRIVATE_SEND, async (data) => {
-    const { toId, content } = data;
+    const { toId, content, clientId } = data;
     const fromId = socket.user.id;
-    const fromUsername = socket.user.username || 'Utilizador';
 
     const result = await messageService.sendPrivate({ fromId, toId, content });
 
-    let receiverName = 'Desconhecido';
+    const receiver = await usersRepo.findById(toId);
+
+    const payload = {
+      id:            result.msg.id,
+      content:       result.msg.content,
+      sender_id:     fromId,
+      receiver_id:   toId,
+      sender_name:   socket.user.username,
+      receiver_name: receiver?.username || `user_${toId}`,
+      created_at:    result.msg.created_at,
+      clientId,
+    };
+
+    // echo back to sender (replaces optimistic message via clientId dedup in context)
+    socket.emit(EVENTS.PRIVATE_MESSAGE, payload);
+
+    // deliver to receiver if online
+    const receiverSocketId = await presenceService.getSocketId(toId);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit(EVENTS.PRIVATE_MESSAGE, payload);
+    }
+  });
+
+  // ─── PRIVATE HISTORY ──────────────────────────────────────────────────────
+  socket.on('privateHistory', async ({ myId, otherId }) => {
     try {
-      const receiver = await usersRepo.findById(toId);
-      receiverName = receiver?.username || `user_${toId}`;
-    } catch (e) {}
+      const messages = await messageService.getConversation(myId, otherId);
 
-    // Confirmação para o remetente
-    socket.emit(EVENTS.PRIVATE_MESSAGE, {
-      ...result.msg,
-      sender_name: fromUsername,
-      receiver_name: receiverName,
-      self: true,
-    });
-
-    // Entrega ao destinatário se estiver online
-    if (result.socketId) {
-      io.to(result.socketId).emit(EVENTS.PRIVATE_MESSAGE, {
-        ...result.msg,
-        sender_name: fromUsername,
-        receiver_name: receiverName,
+      socket.emit('privateHistory', {
+        with: otherId,
+        messages: messages.map((m) => ({
+          ...m,
+          sender_name: m.sender_name || 'user',
+        })),
       });
-    }
-  });
-
-  // Histórico privado
-  socket.on('privateHistory', async ({ myId, otherUsername }) => {
-    try {
-      const otherUser = await usersRepo.findByUsername(otherUsername);
-      if (!otherUser) {
-        socket.emit('privateHistory', { with: otherUsername, messages: [] });
-        return;
-      }
-      const messages = await messageService.getConversation(myId, otherUser.id);
-      socket.emit('privateHistory', { with: otherUsername, messages });
     } catch (err) {
-      socket.emit('privateHistory', { with: otherUsername, messages: [] });
+      console.error('[privateHistory]', err);
+      socket.emit('privateHistory', { with: otherId, messages: [] });
     }
   });
 
-  // Editar mensagem
+  // ─── EDIT MESSAGE ─────────────────────────────────────────────────────────
   socket.on('message:edit', async ({ messageId, content }) => {
     try {
       const updated = await messageService.editMessage(messageId, content);
       if (!updated) return;
 
+      const payload = { ...updated, edited: true };
+
       if (updated.receiver_id) {
+        // private message: notify both participants
+        const senderSocket   = await presenceService.getSocketId(updated.sender_id);
         const receiverSocket = await presenceService.getSocketId(updated.receiver_id);
-        const senderSocket = await presenceService.getSocketId(updated.sender_id);
-        if (receiverSocket) io.to(receiverSocket).emit('message:edited', updated);
-        if (senderSocket) io.to(senderSocket).emit('message:edited', updated);
+        if (senderSocket)   io.to(senderSocket).emit('message:edited', payload);
+        if (receiverSocket) io.to(receiverSocket).emit('message:edited', payload);
       } else {
-        io.to(`group:${updated.group_id}`).emit('message:edited', updated);
+        // group message: broadcast to room
+        io.to(`group:${updated.group_id}`).emit('message:edited', payload);
       }
     } catch (e) {
-      console.error('Erro ao editar:', e);
+      console.error('[message:edit]', e);
     }
   });
 
-  // Apagar mensagem
+  // ─── DELETE MESSAGE ───────────────────────────────────────────────────────
   socket.on('message:delete', async ({ messageId }) => {
     try {
       const deleted = await messageService.deleteMessage(messageId);
       if (!deleted) return;
 
       if (deleted.receiver_id) {
+        const senderSocket   = await presenceService.getSocketId(deleted.sender_id);
         const receiverSocket = await presenceService.getSocketId(deleted.receiver_id);
-        const senderSocket = await presenceService.getSocketId(deleted.sender_id);
+        if (senderSocket)   io.to(senderSocket).emit('message:deleted', deleted);
         if (receiverSocket) io.to(receiverSocket).emit('message:deleted', deleted);
-        if (senderSocket) io.to(senderSocket).emit('message:deleted', deleted);
       } else {
         io.to(`group:${deleted.group_id}`).emit('message:deleted', deleted);
       }
     } catch (e) {
-      console.error('Erro ao apagar:', e);
+      console.error('[message:delete]', e);
     }
   });
 };
