@@ -40,7 +40,7 @@ const io = new Server(server, {
     credentials: true,
   },
 
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   pingInterval: 25000,
   pingTimeout: 60000,
 });
@@ -54,13 +54,13 @@ io.engine.opts.cors = {
 };
 
 // 🔐 AUTH MIDDLEWARE
-io.use((socket, next) => {
-  try {
-    socketAuth(socket, next);
-  } catch (err) {
-    return next(new Error('Auth failed'));
-  }
-});
+// io.use((socket, next) => {
+//   try {
+//     socketAuth(socket, next);
+//   } catch (err) {
+//     return next(new Error('Auth failed'));
+//   }
+// });
 
 // 🔌 LOAD SOCKET EVENTS
 socketLoader(io);
