@@ -20,7 +20,6 @@
 // server.listen(env.PORT, () => {
 //   console.log(`🚀 Server running on port ${env.PORT}`);
 // });
-
 require('dotenv').config();
 
 const http = require('http');
@@ -34,21 +33,25 @@ const socketLoader = require('./src/modules/sockets/socket.index');
 
 const server = http.createServer(app);
 
-// 🔥 SOCKET.IO CONFIG CORRIGIDO
+// 🔥 SOCKET.IO
 const io = new Server(server, {
   cors: {
-    origin: [
-      // 'http://localhost:5173',
-      'https://*.vercel.app',
-    ],
+    origin: true,
     credentials: true,
   },
 
-  transports: ['websocket', 'polling'], // importante para ngrok
-
+  transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000,
 });
+
+// ⚠️ configurações avançadas SÓ depois de criar o io
+io.engine.opts.allowEIO3 = true;
+
+// CORS engine (opcional)
+io.engine.opts.cors = {
+  origin: true,
+};
 
 // 🔐 AUTH MIDDLEWARE
 io.use((socket, next) => {
@@ -62,6 +65,7 @@ io.use((socket, next) => {
 // 🔌 LOAD SOCKET EVENTS
 socketLoader(io);
 
+// 🚀 START SERVER
 server.listen(env.PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${env.PORT}`);
 });

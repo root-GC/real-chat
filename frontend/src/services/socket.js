@@ -28,9 +28,9 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL;
 
 const socket = io(SOCKET_URL, {
   autoConnect: false,
-  transports: ['websocket'], // 🔥 importante no ngrok
+  transports: ['websocket', 'polling'],// 🔥 importante no ngrok
   auth: {
-    token: localStorage.getItem('token')
+    token: null
   }
 });
 
