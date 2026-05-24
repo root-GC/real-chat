@@ -28,13 +28,15 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL;
 
 const socket = io(SOCKET_URL, {
   autoConnect: false,
-  transports: [ 'polling', 'websocket'],// 🔥 importante no ngrok
-  auth: {
-    token: null
-  }
+  transports: ['websocket'],// 🔥 importante no ngrok
+  auth: {}
 });
 
 // 🔥 DEBUG DE CONEXÃO
+socket.on("connect", () => {
+  console.log("CONNECTED");
+});
+
 socket.on("connect", () => {
   console.log("CONNECTED", socket.id);
 });

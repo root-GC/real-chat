@@ -20,6 +20,8 @@
 // server.listen(env.PORT, () => {
 //   console.log(`🚀 Server running on port ${env.PORT}`);
 // });
+
+
 require('dotenv').config();
 
 const http = require('http');
@@ -41,27 +43,28 @@ const io = new Server(server, {
     credentials: true,
   },
 
-  transports: ['polling', 'websocket'],
-  pingInterval: 25000,
-  pingTimeout: 60000,
+  transports: ['websocket'],
+  //allowEIO3: true, // 🔥 volta isto
+  // pingInterval: 25000,
+  // pingTimeout: 60000,
 });
 
 // ⚠️ configurações avançadas SÓ depois de criar o io
-io.engine.opts.allowEIO3 = true;
+// io.engine.opts.allowEIO3 = true;
 
-// CORS engine (opcional)
-io.engine.opts.cors = {
-  origin: true,
-};
+// // CORS engine (opcional)
+// io.engine.opts.cors = {
+//   origin: true,
+// };
 
-// 🔐 AUTH MIDDLEWARE
-// io.use((socket, next) => {
-//   try {
-//     socketAuth(socket, next);
-//   } catch (err) {
-//     return next(new Error('Auth failed'));
-//   }
-// });
+//🔐 AUTH MIDDLEWARE
+io.use((socket, next) => {
+  try {
+    socketAuth(socket, next);
+  } catch (err) {
+    return next(new Error('Auth failed'));
+  }
+});
 
 // 🔌 LOAD SOCKET EVENTS
 socketLoader(io);
