@@ -34,6 +34,15 @@ const socket = io(SOCKET_URL, {
   }
 });
 
+// 🔥 DEBUG DE CONEXÃO
+socket.on("connect", () => {
+  console.log("CONNECTED", socket.id);
+});
+
+socket.on("connect_error", (err) => {
+  console.log("CONNECT ERROR", err.message);
+});
+
 // conecta com token atualizado
 export function connectSocket(token) {
   socket.auth.token = token;
