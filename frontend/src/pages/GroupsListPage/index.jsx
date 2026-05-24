@@ -5,19 +5,19 @@ import socket from '../../services/socket';
 
 export default function GroupsListPage() {
   const navigate = useNavigate();
-  const { users, groups, groupUnread, addGroup, toasts } = useChatContext();
+  const { users, groups, groupUnread, addGroup, removeGroup, toasts } = useChatContext();
 
   const currentUser = JSON.parse(localStorage.getItem('user') || 'null');
 
-  const [showModal, setShowModal]       = useState(false);
-  const [groupName, setGroupName]       = useState('');
-  const [search,    setSearch]          = useState('');
-  const [selected,  setSelected]        = useState(new Set());
-  const [creating,  setCreating]        = useState(false);
-  const [error,     setError]           = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [search,    setSearch]    = useState('');
+  const [selected,  setSelected]  = useState(new Set());
+  const [creating,  setCreating]  = useState(false);
+  const [error,     setError]     = useState('');
+  const [deleting,  setDeleting]  = useState(null); // groupId being deleted
 
-  // All users except self, filtered by search
-  const allUsers     = Object.values(users || {}).filter((u) => u.id !== currentUser?.id);
+  const allUsers      = Object.values(users || {}).filter((u) => u.id !== currentUser?.id);
   const filteredUsers = useMemo(() => {
     const q = search.toLowerCase();
     return q ? allUsers.filter((u) => u.username.toLowerCase().includes(q)) : allUsers;
@@ -39,38 +39,53 @@ export default function GroupsListPage() {
     setShowModal(true);
   };
 
-  // Em GroupsListPage.jsx — substitui o handleCreate inteiro por este.
-// Não precisa de fetch nem de configurar proxy.
+  // ── create via socket ──────────────────────────────────────────────────────
+  const handleCreate = () => {
+    if (!groupName.trim()) {
+      setError('O nome do grupo é obrigatório.');
+      return;
+    }
+    setCreating(true);
+    setError('');
 
-const handleCreate = () => {
-  if (!groupName.trim()) {
-    setError('O nome do grupo é obrigatório.');
-    return;
-  }
-  setCreating(true);
-  setError('');
+    socket.emit('group:create', {
+      name:      groupName.trim(),
+      memberIds: [...selected],
+    });
 
-  // pede ao backend para criar o grupo via socket
-  socket.emit('group:create', {
-    name:      groupName.trim(),
-    memberIds: [...selected],
-  });
+    socket.once('group:created', (group) => {
+      setCreating(false);
+      addGroup(group);
+      setShowModal(false);
+      navigate(group.id === 1 ? '/chat/group' : `/chat/group/${group.id}`);
+    });
 
-  // o servidor responde com 'group:created' (ver group.socket.js abaixo)
-  socket.once('group:created', (group) => {
-    setCreating(false);
-    addGroup(group);
-    setShowModal(false);
-    navigate(group.id === 1 ? '/chat/group' : `/chat/group/${group.id}`);
-  });
+    socket.once('group:create:error', (msg) => {
+      setCreating(false);
+      setError(msg || 'Erro ao criar grupo.');
+    });
+  };
 
-  socket.once('group:create:error', (msg) => {
-    setCreating(false);
-    setError(msg || 'Erro ao criar grupo.');
-  });
-};
+  // ── delete via socket — only allowed for groups created by current user ────
+  const handleDelete = (e, group) => {
+    e.stopPropagation(); // don't navigate into the group
+    if (!confirm(`Apagar o grupo "${group.name}"? Esta ação é irreversível.`)) return;
 
-  // Sort: global group first, then by name
+    setDeleting(group.id);
+
+    socket.emit('group:delete', { groupId: group.id });
+
+    socket.once('group:deleted:ack', () => {
+      setDeleting(null);
+      removeGroup(group.id);
+    });
+
+    socket.once('group:delete:error', (msg) => {
+      setDeleting(null);
+      alert(msg || 'Não foi possível apagar o grupo.');
+    });
+  };
+
   const sortedGroups = useMemo(() => {
     return [...groups].sort((a, b) => {
       if (a.is_global && !b.is_global) return -1;
@@ -92,11 +107,8 @@ const handleCreate = () => {
 
       <p className="subtitle">Os teus grupos e salas de conversa</p>
 
-      {/* CREATE BUTTON */}
       <button className="btn-primary" onClick={openModal} style={{ marginBottom: 20 }}>
-        <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 6 }}>
-          add
-        </span>
+        <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 6 }}>add</span>
         Criar novo grupo
       </button>
 
@@ -107,16 +119,15 @@ const handleCreate = () => {
         )}
 
         {sortedGroups.map((g) => {
-          const unreadInfo = groupUnread?.[g.id];
-          const count      = unreadInfo?.count || 0;
+          const count   = groupUnread?.[g.id]?.count || 0;
+          const isOwner = g.created_by === currentUser?.id;
+          const isDeletable = isOwner && !g.is_global;
 
           return (
             <div
               key={g.id}
               className="group-item card"
-              onClick={() =>
-                navigate(g.id === 1 ? '/chat/group' : `/chat/group/${g.id}`)
-              }
+              onClick={() => navigate(g.id === 1 ? '/chat/group' : `/chat/group/${g.id}`)}
             >
               <span className="material-icons card-icon" style={{ fontSize: 28 }}>
                 {g.is_global ? 'groups' : 'group'}
@@ -124,13 +135,26 @@ const handleCreate = () => {
 
               <div style={{ flex: 1 }}>
                 <strong>{g.name}</strong>
-                {g.is_global && (
-                  <span className="tag-global"> ✦ geral</span>
+                {g.is_global && <span className="tag-global"> ✦ geral</span>}
+                {isOwner && !g.is_global && (
+                  <span className="tag-owner"> · criado por ti</span>
                 )}
               </div>
 
-              {count > 0 && (
-                <span className="unread-badge">{count}</span>
+              {count > 0 && <span className="unread-badge">{count}</span>}
+
+              {/* Delete button — only shown to the creator, never for global group */}
+              {isDeletable && (
+                <button
+                  className="icon-btn icon-btn-danger"
+                  title="Apagar grupo"
+                  disabled={deleting === g.id}
+                  onClick={(e) => handleDelete(e, g)}
+                >
+                  <span className="material-icons" style={{ fontSize: 20 }}>
+                    {deleting === g.id ? 'hourglass_empty' : 'delete'}
+                  </span>
+                </button>
               )}
 
               <span className="material-icons" style={{ color: 'var(--c-muted)' }}>
@@ -141,7 +165,7 @@ const handleCreate = () => {
         })}
       </div>
 
-      {/* ── CREATE GROUP MODAL ── */}
+      {/* CREATE GROUP MODAL */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -153,7 +177,6 @@ const handleCreate = () => {
               </button>
             </div>
 
-            {/* Group name */}
             <label className="modal-label">Nome do grupo</label>
             <input
               className="modal-input"
@@ -165,7 +188,6 @@ const handleCreate = () => {
               autoFocus
             />
 
-            {/* Member search */}
             <label className="modal-label" style={{ marginTop: 14 }}>
               Adicionar membros
             </label>
@@ -177,14 +199,12 @@ const handleCreate = () => {
               onChange={(e) => setSearch(e.target.value)}
             />
 
-            {/* User list */}
             <div className="modal-user-list">
               {filteredUsers.length === 0 && (
-                <p className="empty" style={{ padding: '8px 0' }}>
+                <p className="empty" style={{ padding: '8px 12px' }}>
                   Nenhum utilizador encontrado.
                 </p>
               )}
-
               {filteredUsers.map((u) => (
                 <div
                   key={u.id}
@@ -219,7 +239,6 @@ const handleCreate = () => {
             >
               {creating ? 'A criar...' : 'Criar grupo'}
             </button>
-
           </div>
         </div>
       )}
@@ -236,7 +255,6 @@ const handleCreate = () => {
           </div>
         ))}
       </div>
-
     </div>
   );
 }

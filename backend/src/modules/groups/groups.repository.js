@@ -27,8 +27,7 @@ async function create(name, createdBy) {
 
 async function addMember(groupId, userId) {
   await db.query(
-    `INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
-     ON CONFLICT DO NOTHING`,
+    `INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
     [groupId, userId]
   );
 }
@@ -52,12 +51,30 @@ async function getMembers(groupId) {
   return res.rows;
 }
 
+async function getMemberIds(groupId) {
+  const res = await db.query(
+    `SELECT user_id FROM group_members WHERE group_id = $1`,
+    [groupId]
+  );
+  return res.rows.map((r) => r.user_id);
+}
+
 async function isMember(groupId, userId) {
   const res = await db.query(
     `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2`,
     [groupId, userId]
   );
   return res.rows.length > 0;
+}
+
+/**
+ * Hard-delete a group and all its members (cascade handles messages if FK set,
+ * otherwise messages remain orphaned — adjust to your preference).
+ */
+async function deleteGroup(groupId) {
+  // members first (in case no cascade)
+  await db.query(`DELETE FROM group_members WHERE group_id = $1`, [groupId]);
+  await db.query(`DELETE FROM groups WHERE id = $1`, [groupId]);
 }
 
 module.exports = {
@@ -67,5 +84,7 @@ module.exports = {
   addMember,
   removeMember,
   getMembers,
+  getMemberIds,
   isMember,
+  deleteGroup,
 };

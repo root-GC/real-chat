@@ -1,6 +1,7 @@
 const messageService  = require('../messages/messages.service');
 const messagesRepo    = require('../messages/messages.repository');
 const presenceRepo    = require('../presence/presence.repository');
+const presenceService = require('../presence/presence.service');
 const groupsService   = require('../groups/groups.service');
 const EVENTS          = require('./events');
 
@@ -20,22 +21,16 @@ module.exports = function (io, socket) {
         memberIds
       );
 
-      // creator joins the room immediately
+      // creator joins the room and gets confirmation
       socket.join(`group:${group.id}`);
       socket.emit('group:created', group);
 
-      // notify other members if they're online
+      // notify members who are currently online
       for (const uid of memberIds) {
-        const targetSocket = await presenceRepo.getGroupLastSeen(uid, group.id)
-          .then(() => null)  // we just need the socket id
-          .catch(() => null);
-
-        // simpler: use presence service directly
-        const { getSocketId } = require('../presence/presence.service');
-        const sid = await getSocketId(uid);
+        const sid = await presenceService.getSocketId(uid);
         if (sid) {
-          io.to(sid).emit('user:groups:new', group);   // frontend addGroup()
-          io.to(sid).emit('group:created:notify', {    // optional toast
+          io.to(sid).emit('user:groups:new', group);
+          io.to(sid).emit('group:created:notify', {
             groupName: group.name,
             createdBy: socket.user.username,
           });
@@ -44,6 +39,34 @@ module.exports = function (io, socket) {
     } catch (e) {
       console.error('[group:create]', e);
       socket.emit('group:create:error', 'Erro interno ao criar grupo.');
+    }
+  });
+
+  // ─── DELETE GROUP ─────────────────────────────────────────────────────────
+  socket.on('group:delete', async ({ groupId }) => {
+    try {
+      // service handles ownership + global-group guards
+      const { group, memberIds } = await groupsService.deleteGroup(
+        groupId,
+        socket.user.id
+      );
+
+      // acknowledge to the requester
+      socket.emit('group:deleted:ack', { groupId });
+
+      // notify all online members so their UIs remove the group immediately
+      for (const uid of memberIds) {
+        const sid = await presenceService.getSocketId(uid);
+        if (sid) {
+          io.to(sid).emit('group:deleted', { groupId, groupName: group.name });
+        }
+      }
+
+      // make all sockets leave the room (safety)
+      io.socketsLeave(`group:${groupId}`);
+    } catch (e) {
+      console.error('[group:delete]', e.message);
+      socket.emit('group:delete:error', e.message || 'Erro ao apagar grupo.');
     }
   });
 
@@ -74,8 +97,8 @@ module.exports = function (io, socket) {
 
     socket.join(`group:${groupId}`);
 
-    const messages = await messagesRepo.getGroupMessages(groupId);
-    const lastSeen = await presenceRepo.getGroupLastSeen(socket.user.id, groupId);
+    const messages    = await messagesRepo.getGroupMessages(groupId);
+    const lastSeen    = await presenceRepo.getGroupLastSeen(socket.user.id, groupId);
     const unreadCount = lastSeen
       ? messages.filter((m) => new Date(m.created_at) > new Date(lastSeen)).length
       : 0;

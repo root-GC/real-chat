@@ -9,7 +9,7 @@ const EVENTS          = require('./events');
 
 module.exports = function (io, socket) {
 
-  // ─── auth ────────────────────────────────────────────────────────────────
+  // ─── auth ─────────────────────────────────────────────────────────────────
   let user;
   try {
     const token = socket.handshake.auth.token;
@@ -26,16 +26,16 @@ module.exports = function (io, socket) {
     if (socket.joined) return;
     socket.joined = true;
 
-    // 1. mark online
     await presenceService.setOnline(user.id, socket.id);
 
-    // 2. notify everyone else (they show a toast in their UI)
+    // broadcast to everyone else — always include username so clients don't
+    // have to look it up and never show "undefined entrou"
     socket.broadcast.emit(EVENTS.USER_ONLINE, {
       id:       user.id,
       username: user.username,
     });
 
-    // 3. full user list → joining socket
+    // full user list for the joining socket
     const allUsers    = await usersRepo.findAll();
     const onlineUsers = await presenceService.getAllOnlineUsers();
     const onlineSet   = new Set(onlineUsers.map((u) => Number(u.id)));
@@ -48,33 +48,28 @@ module.exports = function (io, socket) {
       }))
     );
 
-    // 4. get user's groups (auto-adds them to global group:1 if needed)
+    // groups for this user
     const userGroups = await groupsService.getGroupsForUser(user.id);
-
-    // send group list so frontend sidebar populates immediately
     socket.emit(EVENTS.USER_GROUPS, userGroups);
 
-    // 5. for every group: join socket room + send history with unread info
+    // join all group rooms + send history with unread info
     for (const group of userGroups) {
       socket.join(`group:${group.id}`);
 
-      const messages  = await messagesRepo.getGroupMessages(group.id);
-      const lastSeen  = await presenceRepo.getGroupLastSeen(user.id, group.id);
-
-      // count messages the user missed since they last saw this group
+      const messages    = await messagesRepo.getGroupMessages(group.id);
+      const lastSeen    = await presenceRepo.getGroupLastSeen(user.id, group.id);
       const unreadCount = lastSeen
         ? messages.filter((m) => new Date(m.created_at) > new Date(lastSeen)).length
         : 0;
 
       socket.emit(EVENTS.GROUP_HISTORY, {
-        groupId:      group.id,
-        messages:     messages.map((m) => ({ ...m, sender_name: m.sender_name || 'Desconhecido' })),
+        groupId:     group.id,
+        messages:    messages.map((m) => ({ ...m, sender_name: m.sender_name || 'Desconhecido' })),
         unreadCount,
-        unreadSince:  lastSeen || null,
+        unreadSince: lastSeen || null,
       });
     }
 
-    // 6. flush queued offline private messages
     await deliveryEngine.flushOfflineMessages(user.id, socket);
 
     console.log(`🟢 ${user.username} online (socket ${socket.id})`);
@@ -82,23 +77,25 @@ module.exports = function (io, socket) {
 
   // ─── DISCONNECT ───────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
-    // 1-second grace avoids flapping on mobile page transitions
     setTimeout(async () => {
       if (socket.connected) return;
 
       const userId = await presenceService.setOffline(socket.id);
+      if (!userId) return;
 
-      if (userId) {
-        // find username for toast message
-        let username = `user_${userId}`;
+      // FIX: always resolve the username — socket.user may still be in scope,
+      // but if not we fall back to a DB lookup so clients never see "undefined saiu"
+      let username = socket.user?.username;
+      if (!username) {
         try {
           const u = await usersRepo.findById(userId);
-          if (u) username = u.username;
+          username = u?.username;
         } catch { /* ignore */ }
-
-        io.emit(EVENTS.USER_OFFLINE, { id: userId, username });
-        console.log(`🔴 ${username} offline`);
       }
+      username = username || `utilizador ${userId}`;
+
+      io.emit(EVENTS.USER_OFFLINE, { id: userId, username });
+      console.log(`🔴 ${username} offline`);
     }, 1000);
   });
 };

@@ -1766,3 +1766,27 @@ button {
 }
 .btn-primary:hover    { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Add to your existing stylesheet */
+
+/* Danger icon button (delete group) */
+.icon-btn-danger {
+  color: var(--c-danger, #f38ba8);
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.icon-btn-danger:hover:not(:disabled) {
+  opacity: 1;
+}
+.icon-btn-danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* "criado por ti" tag next to group name */
+.tag-owner {
+  font-size: 0.7rem;
+  color: var(--c-muted, #888);
+  margin-left: 4px;
+  font-weight: 400;
+}

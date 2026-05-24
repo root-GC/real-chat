@@ -18,16 +18,13 @@ export function ChatProvider({ children }) {
   const [users,           setUsers]           = useState({});
   const [unread,          setUnread]          = useState({});
   const [privateMessages, setPrivateMessages] = useState({});
-  const [groupMessages,   setGroupMessages]   = useState({});   // { [groupId]: msg[] }
-  const [groupUnread,     setGroupUnread]     = useState({});   // { [groupId]: { count, since } }
-  const [groups,          setGroups]          = useState([]);   // [{ id, name, is_global }]
+  const [groupMessages,   setGroupMessages]   = useState({});
+  const [groupUnread,     setGroupUnread]     = useState({});
+  const [groups,          setGroups]          = useState([]);
   const [toasts,          setToasts]          = useState([]);
+  const [typing,          setTyping]          = useState({});
 
-  // typing: { 'private:userId': { userId: username }, 'group:groupId': { userId: username } }
-  const [typing, setTyping] = useState({});
-  // timeout refs to auto-clear typing after 3s of silence
-  const typingTimers = useRef({});
-
+  const typingTimers   = useRef({});
   const currentUser    = JSON.parse(localStorage.getItem('user') || 'null');
   const currentUserRef = useRef(currentUser);
 
@@ -40,7 +37,6 @@ export function ChatProvider({ children }) {
   }, []);
 
   // ─── typing helpers ────────────────────────────────────────────────────────
-  /** Mark someone as typing; auto-clear after 3s */
   const setTypingActive = useCallback((key, userId, username) => {
     const timerKey = `${key}:${userId}`;
     clearTimeout(typingTimers.current[timerKey]);
@@ -68,11 +64,10 @@ export function ChatProvider({ children }) {
     });
   }, []);
 
-  /** Returns display string like "Ana está a escrever..." */
   const getTypingText = useCallback(
     (type, id) => {
-      const key    = `${type}:${id}`;
-      const names  = Object.values(typing[key] || {});
+      const key   = `${type}:${id}`;
+      const names = Object.values(typing[key] || {});
       if (names.length === 0) return null;
       if (names.length === 1) return `${names[0]} está a escrever...`;
       if (names.length === 2) return `${names[0]} e ${names[1]} estão a escrever...`;
@@ -91,23 +86,7 @@ export function ChatProvider({ children }) {
 
     socket.on('connect', () => socket.emit('join'));
 
-    // Adiciona DENTRO do useEffect do chatContext.jsx, junto aos outros socket.on:
-
-    socket.on('user:groups:new', (group) => {
-      // adicionado a um grupo por outra pessoa
-      addGroup(group);
-      socket.emit('join:group', { groupId: group.id });
-    });
-
-    socket.on('group:created:notify', ({ groupName, createdBy }) => {
-      addToast(`➕ ${createdBy} adicionou-te ao grupo "${groupName}"`);
-    });
-
-    // E no return do cleanup:
-    socket.off('user:groups:new');
-    socket.off('group:created:notify');
-
-    // ── presence ────────────────────────────────────────────────────────────
+    // ── presence ──────────────────────────────────────────────────────────
     socket.on('initial_users', (list) => {
       setUsers((prev) => {
         const updated = { ...prev };
@@ -119,24 +98,57 @@ export function ChatProvider({ children }) {
     });
 
     socket.on('user:online', (u) => {
+      // FIX: guard against missing username — use what's in users state as fallback
+      const name = u.username || `utilizador ${u.id}`;
       setUsers((prev) => ({
         ...prev,
-        [u.id]: { ...prev[u.id], ...u, online: true },
+        [u.id]: { ...prev[u.id], ...u, username: name, online: true },
       }));
       if (u.id !== currentUserRef.current?.id) {
-        addToast(`🟢 ${u.username} entrou`);
+        addToast(`🟢 ${name} entrou`);
       }
     });
 
     socket.on('user:offline', ({ id, username }) => {
-      setUsers((prev) => ({ ...prev, [id]: { ...prev[id], online: false } }));
-      addToast(`⚫ ${username || `utilizador ${id}`} saiu`);
+      // FIX: fallback to state username if payload is missing it
+      setUsers((prev) => {
+        const name = username || prev[id]?.username || `utilizador ${id}`;
+        addToast(`⚫ ${name} saiu`);
+        return { ...prev, [id]: { ...prev[id], online: false } };
+      });
     });
 
-    // ── groups list ──────────────────────────────────────────────────────────
+    // ── groups ─────────────────────────────────────────────────────────────
     socket.on('user:groups', (list) => setGroups(list));
 
-    // ── group history ────────────────────────────────────────────────────────
+    // FIX: was socket.off'd immediately after socket.on in previous version
+    // — listeners are now only removed in the return cleanup below
+
+    socket.on('user:groups:new', (group) => {
+      addGroup(group);
+      socket.emit('join:group', { groupId: group.id });
+    });
+
+    socket.on('group:created:notify', ({ groupName, createdBy }) => {
+      addToast(`➕ ${createdBy} adicionou-te ao grupo "${groupName}"`);
+    });
+
+    // user was removed from a group or group was deleted
+    socket.on('group:deleted', ({ groupId }) => {
+      setGroups((prev) => prev.filter((g) => g.id !== groupId));
+      setGroupMessages((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+      setGroupUnread((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+    });
+
+    // ── group history ──────────────────────────────────────────────────────
     socket.on('group:history', ({ groupId, messages, unreadCount, unreadSince }) => {
       setGroupMessages((prev) => ({ ...prev, [groupId]: messages }));
       if (unreadCount > 0) {
@@ -147,7 +159,7 @@ export function ChatProvider({ children }) {
       }
     });
 
-    // ── live group messages ──────────────────────────────────────────────────
+    // ── live group messages ────────────────────────────────────────────────
     socket.on('group:message', (msg) => {
       setGroupMessages((prev) => {
         const existing = prev[msg.group_id] || [];
@@ -156,7 +168,6 @@ export function ChatProvider({ children }) {
         return { ...prev, [msg.group_id]: [...filtered, msg] };
       });
 
-      // clear sender's typing indicator
       clearTyping(`group:${msg.group_id}`, msg.sender_id);
 
       if (msg.sender_id !== currentUserRef.current?.id) {
@@ -165,7 +176,6 @@ export function ChatProvider({ children }) {
           return { ...prev, [msg.group_id]: { ...cur, count: cur.count + 1 } };
         });
 
-        // toast only if user is not currently viewing this group
         const onGroup =
           window.location.pathname === `/chat/group/${msg.group_id}` ||
           (msg.group_id === 1 && window.location.pathname === '/chat/group');
@@ -178,7 +188,7 @@ export function ChatProvider({ children }) {
       }
     });
 
-    // ── private messages ─────────────────────────────────────────────────────
+    // ── private messages ───────────────────────────────────────────────────
     socket.on('private:message', (msg) => {
       const partnerId =
         msg.sender_id === currentUserRef.current?.id
@@ -192,7 +202,6 @@ export function ChatProvider({ children }) {
         return { ...prev, [partnerId]: [...filtered, msg] };
       });
 
-      // clear typing indicator
       clearTyping(`private:${msg.sender_id}`, msg.sender_id);
 
       const viewing =
@@ -203,7 +212,6 @@ export function ChatProvider({ children }) {
           ...prev,
           [partnerId]: (prev[partnerId] || 0) + 1,
         }));
-
         addToast(`🔒 ${msg.sender_name}: ${msg.content.slice(0, 40)}`, {
           onClick: () => window.location.assign(`/chat/private/${msg.sender_id}`),
         });
@@ -215,15 +223,15 @@ export function ChatProvider({ children }) {
       setUnread((prev) => ({ ...prev, [partnerId]: 0 }));
     });
 
-    // ── typing ───────────────────────────────────────────────────────────────
+    // ── typing ─────────────────────────────────────────────────────────────
     socket.on('typing:update', ({ type, id, userId, username, active }) => {
       if (userId === currentUserRef.current?.id) return;
       const key = `${type}:${id}`;
       if (active) setTypingActive(key, userId, username);
-      else         clearTyping(key, userId);
+      else        clearTyping(key, userId);
     });
 
-    // ── edit / delete ─────────────────────────────────────────────────────────
+    // ── edit / delete ──────────────────────────────────────────────────────
     socket.on('message:edited', (msg) => {
       const patch = (arr) =>
         arr.map((m) =>
@@ -265,12 +273,16 @@ export function ChatProvider({ children }) {
       }
     });
 
+    // ── cleanup — ALL socket.off go here, never outside this return ────────
     return () => {
       socket.off('connect');
       socket.off('initial_users');
       socket.off('user:online');
       socket.off('user:offline');
       socket.off('user:groups');
+      socket.off('user:groups:new');
+      socket.off('group:created:notify');
+      socket.off('group:deleted');
       socket.off('group:history');
       socket.off('group:message');
       socket.off('private:message');
@@ -298,6 +310,12 @@ export function ChatProvider({ children }) {
       if (prev.some((g) => g.id === group.id)) return prev;
       return [...prev, group];
     });
+  }, []);
+
+  const removeGroup = useCallback((groupId) => {
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setGroupMessages((prev) => { const n = { ...prev }; delete n[groupId]; return n; });
+    setGroupUnread((prev)   => { const n = { ...prev }; delete n[groupId]; return n; });
   }, []);
 
   const addOptimisticMessage = useCallback((type, payload) => {
@@ -333,6 +351,7 @@ export function ChatProvider({ children }) {
         resetUnread,
         resetGroupUnread,
         addGroup,
+        removeGroup,
         addToast,
         addOptimisticMessage,
         getTypingText,
