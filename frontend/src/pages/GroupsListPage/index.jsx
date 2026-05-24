@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useChatContext } from '../../store/chatContext';
 import socket from '../../services/socket';
@@ -15,7 +15,21 @@ export default function GroupsListPage() {
   const [selected,  setSelected]  = useState(new Set());
   const [creating,  setCreating]  = useState(false);
   const [error,     setError]     = useState('');
-  const [deleting,  setDeleting]  = useState(null); // groupId being deleted
+  const [deleting,  setDeleting]  = useState(null);
+
+  // Keep refs to pending once-listeners so we can clean them up on unmount
+  const deleteAckRef   = useRef(null);
+  const deleteErrRef   = useRef(null);
+  const deleteTimerRef = useRef(null);
+
+  // Clean up dangling socket listeners when the component unmounts
+  useEffect(() => {
+    return () => {
+      if (deleteAckRef.current)   socket.off('group:deleted:ack',   deleteAckRef.current);
+      if (deleteErrRef.current)   socket.off('group:delete:error',  deleteErrRef.current);
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+    };
+  }, []);
 
   const allUsers      = Object.values(users || {}).filter((u) => u.id !== currentUser?.id);
   const filteredUsers = useMemo(() => {
@@ -39,19 +53,13 @@ export default function GroupsListPage() {
     setShowModal(true);
   };
 
-  // ── create via socket ──────────────────────────────────────────────────────
+  // ── create ─────────────────────────────────────────────────────────────────
   const handleCreate = () => {
-    if (!groupName.trim()) {
-      setError('O nome do grupo é obrigatório.');
-      return;
-    }
+    if (!groupName.trim()) { setError('O nome do grupo é obrigatório.'); return; }
     setCreating(true);
     setError('');
 
-    socket.emit('group:create', {
-      name:      groupName.trim(),
-      memberIds: [...selected],
-    });
+    socket.emit('group:create', { name: groupName.trim(), memberIds: [...selected] });
 
     socket.once('group:created', (group) => {
       setCreating(false);
@@ -66,24 +74,52 @@ export default function GroupsListPage() {
     });
   };
 
-  // ── delete via socket — only allowed for groups created by current user ────
+  // ── delete ─────────────────────────────────────────────────────────────────
   const handleDelete = (e, group) => {
-    e.stopPropagation(); // don't navigate into the group
+    e.stopPropagation();
     if (!confirm(`Apagar o grupo "${group.name}"? Esta ação é irreversível.`)) return;
 
+    // Remove any previous dangling listeners before registering new ones
+    if (deleteAckRef.current)  socket.off('group:deleted:ack',  deleteAckRef.current);
+    if (deleteErrRef.current)  socket.off('group:delete:error', deleteErrRef.current);
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+
     setDeleting(group.id);
+    setError('');
 
-    socket.emit('group:delete', { groupId: group.id });
-
-    socket.once('group:deleted:ack', () => {
+    const onAck = () => {
+      clearTimeout(deleteTimerRef.current);
+      deleteAckRef.current  = null;
+      deleteErrRef.current  = null;
       setDeleting(null);
       removeGroup(group.id);
-    });
+    };
 
-    socket.once('group:delete:error', (msg) => {
+    const onErr = (msg) => {
+      clearTimeout(deleteTimerRef.current);
+      deleteAckRef.current  = null;
+      deleteErrRef.current  = null;
       setDeleting(null);
-      alert(msg || 'Não foi possível apagar o grupo.');
-    });
+      setError(msg || 'Não foi possível apagar o grupo.');
+    };
+
+    // Safety timeout — if server never responds, reset after 8s
+    deleteTimerRef.current = setTimeout(() => {
+      socket.off('group:deleted:ack',  onAck);
+      socket.off('group:delete:error', onErr);
+      deleteAckRef.current = null;
+      deleteErrRef.current = null;
+      setDeleting(null);
+      setError('O servidor não respondeu. Tenta novamente.');
+    }, 8000);
+
+    deleteAckRef.current = onAck;
+    deleteErrRef.current = onErr;
+
+    socket.once('group:deleted:ack',  onAck);
+    socket.once('group:delete:error', onErr);
+
+    socket.emit('group:delete', { groupId: group.id });
   };
 
   const sortedGroups = useMemo(() => {
@@ -97,7 +133,6 @@ export default function GroupsListPage() {
   return (
     <div className="home">
 
-      {/* HEADER */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <button className="icon-btn" onClick={() => navigate('/home')}>
           <span className="material-icons">arrow_back</span>
@@ -112,6 +147,8 @@ export default function GroupsListPage() {
         Criar novo grupo
       </button>
 
+      {error && <p className="modal-error" style={{ marginBottom: 12 }}>{error}</p>}
+
       {/* GROUPS LIST */}
       <div className="groups-list">
         {sortedGroups.length === 0 && (
@@ -119,8 +156,9 @@ export default function GroupsListPage() {
         )}
 
         {sortedGroups.map((g) => {
-          const count   = groupUnread?.[g.id]?.count || 0;
-          const isOwner = g.created_by === currentUser?.id;
+          const count      = groupUnread?.[g.id]?.count || 0;
+          // FIX: cast both to Number — DB is number, currentUser.id may be string from localStorage
+          const isOwner    = Number(g.created_by) === Number(currentUser?.id);
           const isDeletable = isOwner && !g.is_global;
 
           return (
@@ -136,14 +174,11 @@ export default function GroupsListPage() {
               <div style={{ flex: 1 }}>
                 <strong>{g.name}</strong>
                 {g.is_global && <span className="tag-global"> ✦ geral</span>}
-                {isOwner && !g.is_global && (
-                  <span className="tag-owner"> · criado por ti</span>
-                )}
+                {isOwner && !g.is_global && <span className="tag-owner"> · criado por ti</span>}
               </div>
 
               {count > 0 && <span className="unread-badge">{count}</span>}
 
-              {/* Delete button — only shown to the creator, never for global group */}
               {isDeletable && (
                 <button
                   className="icon-btn icon-btn-danger"
