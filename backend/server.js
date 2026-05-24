@@ -36,7 +36,8 @@ const server = http.createServer(app);
 // 🔥 SOCKET.IO
 const io = new Server(server, {
   cors: {
-    origin: true,
+    origin: "https://real-chat-ruddy.vercel.app",
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   },
 

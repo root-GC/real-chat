@@ -7,10 +7,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const navigate = useNavigate();
+const API_BASE = import.meta.env.VITE_API_URL;
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const url = `http://localhost:3000/api/auth/${isRegister ? 'register' : 'login'}`;
+    const url = `${API_BASE}/api/auth/${isRegister ? 'register' : 'login'}`;
     const body = isRegister
       ? { email, username: username || email, password }
       : { email, password };
